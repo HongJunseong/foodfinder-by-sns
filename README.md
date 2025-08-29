@@ -45,7 +45,7 @@ SNS에는 실제 후기와 광고·협찬 게시글이 섞여 있어 신뢰도 �
 - 추출된 후보는 리스트로 보존해 `data/extracted.csv`에 기록하고, 실패 건(Prompt 정책에 의한 실패 혹은 API 호출 실패)은 `data/extracted_failures.csv`에 남깁니다.
 
 ### 광고/협찬 판별(규칙 기반)
-- 해시태그(#광고/#협찬) + 키워드(제공받음/sponsored/paid partnership 등) + CTA(예약/문의/DM/링크/전화) 신호를 점수화해 is_ad 라벨을 만듭니다.
+- 해시태그(#광고/#협찬) + 키워드(제공받음/sponsored/paid partnership 등) + CTA(예약/문의/DM/링크/전화) 신호를 점수화하여 is_ad(광고 여부) 라벨을 만듭니다.
 - 임계값과 여러 모드(--mode=balanced|recall)를 통해 보수/공격적 라벨링을 선택할 수 있으며 결과는 `data/ad_extracted.csv`로 저장합니다.
 
 ### 주소 표준화 & 지도 생성
@@ -74,12 +74,12 @@ CSV 인코딩은 **UTF-8-sig** 를 사용합니다.\
 
 | 컬럼 | 타입 | 예시 | 설명 |
 |---|---|---|---|
-| `post_id` | string | `DN43NiUe...` | 게시글 고유 ID(조인 키) |
-| `content` | string | `엄청 맛있..` | 본문 텍스트(이모지 가능) |
-| `likes` | int | `14` | 좋아요 수(파싱 실패 시 빈값/0) |
+| `post_id` | string | `DN43NiUe...` | 게시글 고유 ID |
+| `content` | string | `엄청 맛있..` | 본문 텍스트 |
+| `likes` | int | `14` | 좋아요 수 |
 | `hashtags` | string(JSON array) | `["#여수맛집"]` | 해시태그 목록 |
-| `comments` | string(JSON array) | `["", "#여수맛집"]` | 댓글 일부/요약 |
-| `date` | date(YYYY-MM-DD) | `2025-08-02` | 게시 날짜(현지 기준) |
+| `comments` | string(JSON array) | `["", "#여수맛집"]` | 댓글 |
+| `date` | date(YYYY-MM-DD) | `2025-08-02` | 게시 날짜 |
 | `search_tag` | string | `여수맛집` | 수집에 사용한 검색 태그 |
 
 > 무결성: `post_id` 유일, `date`는 `YYYY-MM-DD` 형식 유지.
@@ -90,8 +90,8 @@ CSV 인코딩은 **UTF-8-sig** 를 사용합니다.\
 | 컬럼 | 타입 | 예시 | 설명 |
 |---|---|---|---|
 | *(원천 컬럼 전부)* |  |  | `region_restaurant.csv`의 모든 컬럼 유지 |
-| `restaurant_name` | string \| string(JSON array) | `["식당명"]` | LLM이 추출한 식당명(복수 가능, 보통 1개) |
-| `address` | string(JSON array) | `["식당 주소"]` | LLM이 추출한 주소 후보(복수 가능) |
+| `restaurant_name` | string \| string(JSON array) | `["식당명"]` | LLM이 추출한 식당명(복수 불가능) |
+| `address` | string(JSON array) | `["식당 주소"]` | LLM이 추출한 주소 후보(복수 불가능) |
 
 > 규칙: `restaurant_name`, `address`는 **후보군을 보존**하기 위해 리스트 문자열로 저장합니다. 후보가 없으면 `[]`.
 
@@ -102,7 +102,7 @@ LLM 추출 결과에 **광고 라벨**만 추가된 파일.
 | 컬럼 | 타입 | 예시 | 설명 |
 |---|---|---|---|
 | *(extracted 컬럼 전부)* |  |  | `extracted.csv`의 모든 컬럼 유지 |
-| `is_ad` | bool | `false` | 규칙 기반 판별 결과(광고/협찬 여부) |
+| `is_ad` | bool | `false` | 규칙 기반 판별 결과 |
 
 > 참고: 현재 스키마는 `is_ad`만 추가합니다. 필요 시 `ad_reason`, `ad_keywords` 등을 후속 버전에서 확장 가능.
 
@@ -117,7 +117,7 @@ LLM 추출 결과에 **광고 라벨**만 추가된 파일.
 ---
 ## 📈 규칙 기반 광고 판별 검증
 
-**규칙 기반 광고 판별**을 사용하고, 학습 모델(XGBoost / RandomForest / LightGBM)은
+**규칙에 기반하여 광고를 판별**한 뒤, 학습 모델(XGBoost / RandomForest / LightGBM)은
 규칙이 잘 동작하는지 규칙 라벨('is_ad')을 기준으로 **진단·비교**하기 위한 용도로 사용합니다.
 
 - **평가 설정**: **광고(`is_ad=1`)를 양성(positive) 클래스**로 두고 지표를 계산합니다.
@@ -131,6 +131,10 @@ LLM 추출 결과에 **광고 라벨**만 추가된 파일.
 | LightGBM     | 0.96             | 0.81  | 0.88 | 0.96    |
 
 > 이 표는 **규칙이 만든 라벨이 일관적으로 작동하는지**를 확인하기 위한 참고용입니다.
+
+> 세 모델 모두에서 ROC-AUC가 **≈0.96**, F1이 **0.86–0.88**로 꾸준히 높게 나온 것은, **규칙(`is_ad`) 라벨을 모델이 잘 재현할 만큼 규칙이 일관적으로 적용**되고 있다는 뜻입니다.  
+Precision(0.90–0.96)이 높은 편이어서 **“광고로 판정된 것의 정확도”가 높고**, Recall(0.81–0.85)도 양호하여 **규칙이 놓치는 광고 패턴이 일부 있지만 크지 않음**을 시사합니다.  
+다만 이 평가는 **규칙 라벨과의 합치도**이며 절대적인 정답과의 정확도는 아닙니다. 따라서 주기적으로 **오분류 샘플을 점검**하여 해시태그/키워드/CTA 규칙을 보완하는 것이 좋습니다.
 
 ---
 
