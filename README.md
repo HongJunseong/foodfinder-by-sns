@@ -25,66 +25,40 @@ SNS에는 실제 후기와 광고·협찬 게시글이 섞여 있어 신뢰도 �
 - **지도 표준화**: 카카오맵 API로 **주소 정규화 → 위경도·행정동 매핑**을 수행하고, 오기재·다점포는 **거리/문자 유사도**로 **중복 병합**합니다. 간이 지도 페이지를 생성하여 시각적으로 확인이 가능하도록 하였습니다.
 - **저장**: 최종 결과는 **CSV**로 저장하고, 필요 시 **MongoDB**를 사용하여 운영 저장소에 적재할 수 있도록 하였습니다.  
 
----
 
-## 📁 폴더 구조
-```bash
-SNS-EATS/
-├─ artifacts/
-├─ data/
-├─ scripts/
-│  ├─ filter_for_map.py
-│  ├─ load_to_mongo.py
-│  ├─ make_ad_labels.py
-│  ├─ qc_nonad_quality.py
-│  ├─ run_crawling_instagram.py
-│  └─ run_map_api.py
-├─ src/
-│  ├─ modules/
-│  │  ├─ db/
-│  │  │  └─ db_mongo.py
-│  │  ├─ llm/
-│  │  │  ├─ llm_extract.py
-│  │  │  └─ run_enrich_llm.py
-│  │  ├─ ad_rules.py
-│  │  ├─ crawling_instagram.py
-│  │  ├─ data_io.py
-│  │  └─ map_api.py
-│  └─ utils/
-│     ├─ crawling_utils.py
-│     └─ map_utils.py
-├─ environment.yml
-├─ .env
-└─ README.md
-```
 
 ---
 
-## 🧠 핵심 설계 포인트
+## 🧠 핵심 기능
 
-- **단계형 파이프라인**  
-  데이터 수집 → LLM 추출 → 규칙 기반 광고 판별 → 지도 표준화 → 저장. 각 단계가 **독립 실행/재실행** 가능해 디버깅이 쉽습니다.
+### 인스타그램 크롤링
+- 로그인(환경변수 IG_ID/IG_PW) → 해시태그 검색 → 게시글 순회. 본문·해시태그·댓글·좋아요를 수집하고, 다중 셀렉터/정규식 백업과 실패 시 로그 후 건너뛰기로 수집을 끊기지 않게 유지합니다.
+- 결과는 `data/region_restaurant.csv`에 `post_id` 기준 중복 제거로 저장합니다.
 
-- **LLM을 통한 광고 1차 필터링 및 필수 정보 추출**
-  LLM으로 게시글에서 **식당명·주소를 정규 형태로 추출**하면서, 문맥 기반으로 **광고 가능성이 낮은 후보를 1차 선별**합니다.
+### 텍스트 전처리
+- 이모지·URL·전화번호·과도한 해시태그를 마스킹/삭제하고 공백을 정리합니다.
+- 리스트형 필드(예: 해시태그·댓글)는 JSON 문자열로 통일해 CSV에서 깨지지 않게 합니다(UTF-8-sig).
 
-- **광고 규칙 집합**  
-  게시글 내의 **해시태그(#광고·#협찬)**, **키워드(제공받음/체험단/sponsored)**, **CTA(예약/문의/DM/구매링크)** 등을 고려하여 광고를 판별합니다.
+### LLM 기반 정보 추출
+- 게시글에서 식당명·주소를 JSON 스키마로 추출합니다(모델: gpt-3.5-turbo).
+- 요청이 실패하면 잠깐 대기했다가 최대 N회까지 다시 시도합니다(과도한 호출/일시적인 오류 대비).
+- 추출된 후보는 리스트로 보존해 `data/extracted.csv`에 기록하고, 실패 건(Prompt 정책에 의한 실패 혹은 API 호출 실패)은 `data/extracted_failures.csv`에 남깁니다.
 
-- **주소 표준화 & 중복 병합**  
-  카카오맵 API로 **주소 정규화 → 위경도·행정동 매핑**을 수행하고, **거리 + 문자열 유사도**로 **지점 중복**을 정리합니다.
+### 광고/협찬 판별(규칙 기반)
+- 해시태그(#광고/#협찬) + 키워드(제공받음/sponsored/paid partnership 등) + CTA(예약/문의/DM/링크/전화) 신호를 점수화해 is_ad 라벨을 만듭니다.
+- 임계값과 여러 모드(--mode=balanced|recall)를 통해 보수/공격적 라벨링을 선택할 수 있으며 결과는 `data/ad_extracted.csv`로 저장합니다.
 
-- **견고한 크롤러**  
-  DOM 변동에 대비해 **다중 셀렉터/정규식 백업**을 두고, 실패 레코드는 **로깅 후 건너뜀**으로 **파이프라인 중단**을 막습니다.
+### 주소 표준화 & 지도 생성
+- 카카오 REST API로 도로명 주소 인식 → 위/경도 변환 후, 좌표 반경에서 키워드 재탐색으로 장소명을 정밀화합니다.
+- 비광고(is_ad=false)만 표시한 인터랙티브 지도 `matched_places_map.html`을 생성하며, 표시 개수/중심/줌/중복 제거 키는 환경변수로 조절합니다.
 
-- **즉시 검수 가능한 산출물**  
-  결과를 `matched_places_map.html`로 내보내 **비(非)광고로 확정된 맛집 후보**를 지도로 빠르게 확인할 수 있습니다.
+### 결과 저장 & 운영 옵션
+- 기본 산출물은 CSV(UTF-8-sig). 필요 시 MongoDB UPSERT로 운영 저장소에 적재(merge 키 기준 중복 없이 갱신).
+- 파이프라인 중간 산출물은 `region_restaurant.csv` → `extracted.csv` → `ad_extracted.csv` → `clean/non_ads.csv`, `clean/ads.csv` 순으로 축적됩니다.
 
-- **저장 전략 이중화**  
-  기본은 **CSV**, 운영 탐색·검색이 필요하면 **MongoDB upsert**로 중복 없이 갱신합니다.
-
-- **환경 기반 설정**  
-  모든 키/옵션은 **.env**로 분리하여 코드와 **비밀정보**를 격리, 로컬↔운영 전환을 단순화했습니다.
+### 규칙 진단용 모델(선택 사용)
+- TF-IDF(문자 n-gram)+숫자 피처 기반 LGBM/RF/XGB를 고정 시드 교차검증(OOF) 으로 학습해 Precision/Recall/F1/ROC-AUC를 산출합니다.
+- 규칙 라벨 기준의 의심 샘플/경계 샘플을 `data/qc/*.csv`로 내보내 규칙 점검에 활용합니다. (진단 및 비교 목적)
 
 ---
 
@@ -141,7 +115,7 @@ LLM 추출 결과에 **광고 라벨**만 추가된 파일.
 
 
 ---
-## 📈 규칙 기반 판별 검증
+## 📈 규칙 기반 광고 판별 검증
 
 **규칙 기반 광고 판별**을 사용하고, 학습 모델(XGBoost / RandomForest / LightGBM)은
 규칙이 잘 동작하는지 규칙 라벨('is_ad')을 기준으로 **진단·비교**하기 위한 용도로 사용합니다.
@@ -232,3 +206,40 @@ python scripts/run_map_api.py
 # MongoDB에 적재 (선택)  
 python scripts/load_to_mongo.py           
 ```
+---
+<details>
+ 
+<summary><h2>📁 폴더 구조</h2></summary>
+
+```bash
+SNS-EATS/
+├─ artifacts/
+├─ data/
+├─ scripts/
+│  ├─ filter_for_map.py
+│  ├─ load_to_mongo.py
+│  ├─ make_ad_labels.py
+│  ├─ qc_nonad_quality.py
+│  ├─ run_crawling_instagram.py
+│  └─ run_map_api.py
+├─ src/
+│  ├─ modules/
+│  │  ├─ db/
+│  │  │  └─ db_mongo.py
+│  │  ├─ llm/
+│  │  │  ├─ llm_extract.py
+│  │  │  └─ run_enrich_llm.py
+│  │  ├─ ad_rules.py
+│  │  ├─ crawling_instagram.py
+│  │  ├─ data_io.py
+│  │  └─ map_api.py
+│  └─ utils/
+│     ├─ crawling_utils.py
+│     └─ map_utils.py
+├─ environment.yml
+├─ .env
+└─ README.md
+```
+  
+</details>
+
