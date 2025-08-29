@@ -1,0 +1,25 @@
+name: snsa
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9.21
+  - pip
+  - pandas>=2.2
+  - numpy>=1.26
+  - scipy
+  - scikit-learn>=1.4
+  - joblib
+  - xgboost>=2.0
+  - lightgbm
+  - requests
+  - folium
+  - python-dotenv
+  - pymongo>=4.6
+  - dnspython
+  - selenium>=4.18
+  - emoji
+  - pyarrow            # (Parquet 필요 시; 있어도 무방)
+  - pip:
+      - langchain-openai>=0.1.7
+      - openai>=1.40.0
