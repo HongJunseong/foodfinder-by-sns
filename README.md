@@ -209,6 +209,11 @@ IG_CRAWL_COUNT=10
 
 ## 🚀 Quick Start
 ```bash
+
+# 가상환경 생성 및 활성화 (수정)
+conda env create -n snsa -f environment.yml
+conda activate snsa
+
 # 게시글 크롤링
 python scripts/run_crawling_instagram.py
 
